@@ -2,7 +2,8 @@
 #include "user.h"
 
 
-int main(int argc, char* argv[]){
+int main(int argc, char* argv[])
+{
     volatile
     int old_p[2];
     int new_p[2];
@@ -23,9 +24,9 @@ int main(int argc, char* argv[]){
         pipe(new_p);
         close(old_p[1]);
 
-        if(!read(old_p[0],&this_prime,sizeof(int))) break;
+        if(read(old_p[0],&this_prime,sizeof(int)) != sizeof(int)) break;
         printf("prime %d\n", this_prime);
-        while (read(old_p[0],&number,sizeof(int)))
+        while (read(old_p[0],&number,sizeof(int)) == sizeof(int))
         {
             if (number % this_prime == 0)
             {
