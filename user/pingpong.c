@@ -25,6 +25,5 @@ int main (int argc, char* argv[]){
         wait(&wait_ret);
         exit(0);
     }
-    
     exit(0);
 }

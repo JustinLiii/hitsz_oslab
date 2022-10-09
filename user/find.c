@@ -175,12 +175,16 @@ void main(int argc, char* argv[])
     {
         i++;
     }
+    #ifdef DEBUG
     printf("dir length %d\n",i);
+    #endif
     i--;
     if(argv[1][i] == '/')
     {
         argv[1][i] = '\0';
+        #ifdef DEBUG
         printf("Corrected path\n");
+        #endif
     }
     find(argv[1],argv[2]);
     exit(0);
