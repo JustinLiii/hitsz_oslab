@@ -10,6 +10,8 @@
 #include "defs.h"
 
 void freerange(void *pa_start, void *pa_end);
+void freerangecpu(void *pa_start, void *pa_end, int cpuid);
+void kfreecpu(void *pa, int cpuid);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.
@@ -21,13 +23,33 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
-} kmem;
+} kmem[NCPU];
 
 void
 kinit()
 {
-  initlock(&kmem.lock, "kmem");
-  freerange(end, (void*)PHYSTOP);
+  uint64 seg = ((uint64)PHYSTOP - (uint64)end)/(PGSIZE*NCPU);
+  for(int i=0;i<NCPU;i++)
+  {
+      initlock(&kmem[i].lock, "kmem");
+      if(i+1<NCPU)
+      {
+        freerangecpu(end+seg*i*PGSIZE, end+seg*(i+1)*PGSIZE, i);
+      }
+      else
+      {
+        freerangecpu(end+seg*i*PGSIZE, (void*)PHYSTOP, i);
+      }
+  }
+}
+
+void
+freerangecpu(void *pa_start, void *pa_end, int cpuid)
+{
+  char *p;
+  p = (char*)PGROUNDUP((uint64)pa_start);
+  for(; p + PGSIZE <= (char*)pa_end; p += PGSIZE)
+    kfreecpu(p,cpuid); 
 }
 
 void
@@ -44,7 +66,16 @@ freerange(void *pa_start, void *pa_end)
 // call to kalloc().  (The exception is when
 // initializing the allocator; see kinit above.)
 void
-kfree(void *pa)
+kfree(void* pa)
+{
+  //get cpuid
+  push_off();
+  int id=cpuid();
+  pop_off();
+  kfreecpu(pa, id);
+}
+void
+kfreecpu(void *pa, int cpuid)
 {
   struct run *r;
 
@@ -55,11 +86,10 @@ kfree(void *pa)
   memset(pa, 1, PGSIZE);
 
   r = (struct run*)pa;
-
-  acquire(&kmem.lock);
-  r->next = kmem.freelist;
-  kmem.freelist = r;
-  release(&kmem.lock);
+  acquire(&kmem[cpuid].lock);
+  r->next = kmem[cpuid].freelist;
+  kmem[cpuid].freelist = r;
+  release(&kmem[cpuid].lock);
 }
 
 // Allocate one 4096-byte page of physical memory.
@@ -70,11 +100,34 @@ kalloc(void)
 {
   struct run *r;
 
-  acquire(&kmem.lock);
-  r = kmem.freelist;
+  push_off();
+  int id=cpuid();
+  pop_off();
+  acquire(&kmem[id].lock);
+  r = kmem[id].freelist;
   if(r)
-    kmem.freelist = r->next;
-  release(&kmem.lock);
+    kmem[id].freelist = r->next;
+  release(&kmem[id].lock);
+
+  //steal
+  if(!r){
+    for (int i = 0; i < NCPU; i++)
+    {
+      if (i==id) continue;
+      acquire(&kmem[i].lock);
+      r = kmem[i].freelist;
+      if(r)
+      {
+        kmem[i].freelist = r->next;
+        release(&kmem[i].lock);
+        break;
+      }
+      else
+      {
+        release(&kmem[i].lock);
+      }
+    }
+  }
 
   if(r)
     memset((char*)r, 5, PGSIZE); // fill with junk
