@@ -119,6 +119,7 @@ exec(char *path, char **argv)
   {
     vmprint(p->pagetable);
   }
+  sync_user_kernel_pagetable(p->pagetable,p->k_pagetable);
   return argc; // this ends up in a0, the first argument to main(argc, argv)
 
  bad:
@@ -128,6 +129,7 @@ exec(char *path, char **argv)
     iunlockput(ip);
     end_op();
   }
+  sync_user_kernel_pagetable(p->pagetable,p->k_pagetable);
   return -1;
 }
 

@@ -320,23 +320,36 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 }
 
 // Free user kernel pages
+// be careful dont free user pgtable at 0x0 to 0xC000000
 void
 ukvmfree(pagetable_t uk_pagetable)
 {
+  pagetable_t k_secondary = (pagetable_t)PTE2PA(uk_pagetable[0]);
+  for (int i = 0; i < 0x60; i++)
+  {
+    k_secondary[i] = 0 ;
+  }
+  ukvmfreewalk(uk_pagetable);
+}
+
+void
+ukvmfreewalk(pagetable_t pagetable)
+{
   // there are 2^9 = 512 PTEs in a page table.
   for(int i = 0; i < 512; i++){
-    pte_t pte = uk_pagetable[i];
+    pte_t pte = pagetable[i];
     if((pte & PTE_V) && (pte & (PTE_R|PTE_W|PTE_X)) == 0){
       // this PTE points to a lower-level page table.
+      // if(pte & PTE_U) continue; //ignore user page
       uint64 child = PTE2PA(pte);
-      ukvmfree((pagetable_t)child);
-      uk_pagetable[i] = 0;  
+      ukvmfreewalk((pagetable_t)child);
+      pagetable[i] = 0;  
     } else {
       //the pte points to leaf, return to parents
-      break;
+      continue;
     }
   }
-  kfree((void*)uk_pagetable);
+  kfree((void*)pagetable);
 }
 
 // Given a parent process's page table, copy
@@ -419,23 +432,29 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
-  uint64 n, va0, pa0;
+  // uint64 n, va0, pa0;
 
-  while(len > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > len)
-      n = len;
-    memmove(dst, (void *)(pa0 + (srcva - va0)), n);
+  // while(len > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > len)
+  //     n = len;
+  //   memmove(dst, (void *)(pa0 + (srcva - va0)), n);
 
-    len -= n;
-    dst += n;
-    srcva = va0 + PGSIZE;
-  }
-  return 0;
+  //   len -= n;
+  //   dst += n;
+  //   srcva = va0 + PGSIZE;
+  // }
+  // return 0;
+
+  int ret;
+  w_sstatus(r_sstatus() | SSTATUS_SUM);
+  ret = copyin_new(pagetable,dst,srcva,len);
+  w_sstatus(r_sstatus() & ~SSTATUS_SUM);
+  return ret;
 }
 
 // Copy a null-terminated string from user to kernel.
@@ -445,40 +464,46 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
-  uint64 n, va0, pa0;
-  int got_null = 0;
+  // uint64 n, va0, pa0;
+  // int got_null = 0;
 
-  while(got_null == 0 && max > 0){
-    va0 = PGROUNDDOWN(srcva);
-    pa0 = walkaddr(pagetable, va0);
-    if(pa0 == 0)
-      return -1;
-    n = PGSIZE - (srcva - va0);
-    if(n > max)
-      n = max;
+  // while(got_null == 0 && max > 0){
+  //   va0 = PGROUNDDOWN(srcva);
+  //   pa0 = walkaddr(pagetable, va0);
+  //   if(pa0 == 0)
+  //     return -1;
+  //   n = PGSIZE - (srcva - va0);
+  //   if(n > max)
+  //     n = max;
 
-    char *p = (char *) (pa0 + (srcva - va0));
-    while(n > 0){
-      if(*p == '\0'){
-        *dst = '\0';
-        got_null = 1;
-        break;
-      } else {
-        *dst = *p;
-      }
-      --n;
-      --max;
-      p++;
-      dst++;
-    }
+  //   char *p = (char *) (pa0 + (srcva - va0));
+  //   while(n > 0){
+  //     if(*p == '\0'){
+  //       *dst = '\0';
+  //       got_null = 1;
+  //       break;
+  //     } else {
+  //       *dst = *p;
+  //     }
+  //     --n;
+  //     --max;
+  //     p++;
+  //     dst++;
+  //   }
 
-    srcva = va0 + PGSIZE;
-  }
-  if(got_null){
-    return 0;
-  } else {
-    return -1;
-  }
+  //   srcva = va0 + PGSIZE;
+  // }
+  // if(got_null){
+  //   return 0;
+  // } else {
+  //   return -1;
+  // }
+
+  int ret;
+  w_sstatus(r_sstatus() | SSTATUS_SUM);
+  ret = copyinstr_new(pagetable, dst, srcva, max);
+  w_sstatus(r_sstatus() & ~SSTATUS_SUM);
+  return ret;
 }
 
 // check if use global kpgtbl or not 
@@ -552,4 +577,22 @@ switch_user_kernal_pgtable(pagetable_t ukernel_pagetable)
 {
   w_satp(MAKE_SATP(ukernel_pagetable));
   sfence_vma();
+}
+
+void
+sync_user_kernel_pagetable(pagetable_t u_pagetable, pagetable_t k_pagetable)
+{
+  // user mem space from 0x0 to 0xC000000
+  // only takes up less them one secondary pgtable
+  // copy the needed items from u_pgtable to k_pagetable
+
+  pagetable_t u_secondary = (pagetable_t)PTE2PA(u_pagetable[0]);
+  pagetable_t k_secondary = (pagetable_t)PTE2PA(k_pagetable[0]);
+
+  // 0xC000000 = 1100 0000 0000 0000 0000 0000 0000
+  // 2nd = 1100000 = 0x60 3rd = 000000000 offset = 000000000000
+  for (int i = 0; i < 0x60; i++)
+  {
+    k_secondary[i] = u_secondary[i];
+  }
 }

@@ -186,7 +186,9 @@ int             test_pagetable();
 void            vmprint(pagetable_t);
 void            ukvminit(pagetable_t);
 void            ukvmfree(pagetable_t);
+void            ukvmfreewalk(pagetable_t);
 void            switch_user_kernal_pgtable(pagetable_t);
+void            sync_user_kernel_pagetable(pagetable_t, pagetable_t);
 
 // plic.c
 void            plicinit(void);
@@ -210,6 +212,10 @@ void            statsinc(void);
 
 // sprintf.c
 int             snprintf(char*, int, char*, ...);
+
+// vmcopyin.c
+int             copyin_new(pagetable_t, char *, uint64, uint64);
+int             copyinstr_new(pagetable_t, char *, uint64, uint64);
 
 #ifdef LAB_NET
 // pci.c

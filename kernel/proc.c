@@ -267,6 +267,8 @@ userinit(void)
 
   p->state = RUNNABLE;
 
+  sync_user_kernel_pagetable(p->pagetable,p->k_pagetable);
+
   release(&p->lock);
 }
 
@@ -287,6 +289,7 @@ growproc(int n)
     sz = uvmdealloc(p->pagetable, sz, sz + n);
   }
   p->sz = sz;
+  sync_user_kernel_pagetable(p->pagetable,p->k_pagetable);
   return 0;
 }
 
@@ -331,6 +334,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  sync_user_kernel_pagetable(np->pagetable, np->k_pagetable);
 
   release(&np->lock);
 
